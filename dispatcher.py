@@ -152,7 +152,9 @@ class Dispatcher:
       def recvPayment(self, parent, amount):
           # don't take payments from dodgy alternative universes
           if self._parent == parent:
+             print('Dispatcher received payment: {0}'.format(amount))
              self._revenue += amount
+             print('Dispatcher total: {0}'.format(self._revenue))
 
       #________________________________________________________________________________________________________________
 

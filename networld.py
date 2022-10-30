@@ -568,7 +568,7 @@ class NetWorld:
              outputs = {}
           ticksRun = 0
           while (ticks == 0 or ticksRun < ticks) and (self.runTime == 0 or self._time < self.runTime):
-                print("Current time in the simulation world: {0}".format(self._time))
+                #print("Current time in the simulation world: {0}".format(self._time))
                 if 'time' in outputs:
                    outputs['time'].append(self._time)
                 # really simple recording of fares: just where there are fares still waiting. More
