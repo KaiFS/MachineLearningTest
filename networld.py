@@ -98,6 +98,8 @@ class NetWorld:
           #self.eventQ = NetEventQueue()
           # the simulation clock. 
           self._time = 0
+          self.cancels = 0
+          self.totalOfflines = 0
 
       # properties
 
@@ -539,6 +541,9 @@ class NetWorld:
           # they're not off. But just in case, to prevent any spurious messages being sent...
           if taxi.onDuty:
              taxi.recvMsg(taxi.FARE_CANCEL, **{'origin': origin})
+
+          self.cancels += 1
+          print('Total fare cancels: {0}'.format(self.cancels))
 
       '''methods generally called by Taxis
       '''

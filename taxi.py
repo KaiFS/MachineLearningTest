@@ -176,6 +176,8 @@ class Taxi:
              print("Taxi {0} is going off-duty".format(self.number))
              self.onDuty = False
              self._offDutyTime = self._world.simTime
+             self._world.totalOfflines += 1
+             print ("Total taxi's offline: {0}".format(self._world.totalOfflines))
           # have we reached our last known destination? Decide what to do now.
           if len(self._path) == 0:
              # obviously, if we have a fare aboard, we expect to have reached their destination,
@@ -315,9 +317,7 @@ class Taxi:
                        return
           # we just dropped off a fare and received payment, add it to the account
           elif msg == self.FARE_PAY:
-             print('Fair dropped off for: {0}'.format(args['amount']))
              self._account += args['amount']
-             print('Total made: {0}'.format(self._account))
              return
           # a fare cancelled before being collected, remove it from the list
           elif msg == self.FARE_CANCEL:
@@ -334,37 +334,38 @@ class Taxi:
       # this function should build your route and fill the _path list for each new
       # journey. Below is a naive depth-first search implementation. You should be able
       # to do much better than this!
-      def _planPath(self, origin, destination):
+      def _planPath(self, origin, destination, **args):
+          # the list of explored paths. Recursive invocations pass in explored as a parameter
+          if 'explored' not in args:
+             args['explored'] = {}
+          # add this origin to the explored list
+          # explored is a dict purely so we can hash its index for fast lookup, so its value doesn't matter
+          args['explored'][origin] = None 
           # the actual path we are going to generate
           path = [origin]
-          # the frontier remaining to explore to build the path          
-          frontier = [origin]
-          frontier_g = {origin: 0}
-          frontier_f = {origin: 0}
-          visit_path = {origin: None}
-          current = None
-          while len(frontier) != 0:
-             lowestCostIndex = numpy.argmin([frontier_f[n] for n in frontier])
-             current = frontier.pop(lowestCostIndex)
-             if current == destination:
-                break
-             neighbors = [node for node in self._map[current].keys()]
-             for neighbor in neighbors:
-                nx, ny = neighbor
-                neighbor_cost = frontier_g[current] + 1
-                if neighbor not in frontier_g or neighbor_cost < frontier_g[neighbor]:
-                  frontier_g[neighbor] = neighbor_cost
-                  cx, cy = current
-                  frontier_f[neighbor] = abs(cx - nx) + abs(cy - ny) + frontier_g[neighbor]
-                  frontier.append(neighbor)
-                  visit_path[neighbor] = current
-
-          path = []
-          while visit_path[current] is not None:
-             path.append(current)
-             current = visit_path[current]
-          path.append(current)
-          return path[::-1]
+          # take the next node in the frontier, and expand it depth-wise               
+          if origin in self._map:
+             # the frontier of unexplored paths (from this Node
+             frontier = [node for node in self._map[origin].keys() if node not in args['explored']]
+             # recurse down to the next node. This will automatically create a depth-first
+             # approach because the recursion won't bottom out until no more frontier nodes
+             # can be generated 
+             for nextNode in frontier:
+                 path = path + self._planPath(nextNode, destination, explored=args['explored'])
+                 # stop early as soon as the destination has been found by any route.
+                 if destination in path:
+                    # validate path
+                    if len(path) > 1:
+                       try:
+                           # use a generator expression to find any invalid nodes in the path
+                           badNode = next(pnode for pnode in path[1:] if pnode not in self._map[path[path.index(pnode)-1]].keys())
+                           raise IndexError("Invalid path: no route from ({0},{1}) to ({2},{3} in map".format(self._map[path.index(pnode)-1][0], self._map[path.index(pnode)-1][1], pnode[0], pnode[1]))
+                       except StopIteration:
+                           pass
+                    return path
+          # didn't reach the destination from any reachable node
+          # no need, therefore, to expand the path for the higher-level call, this is a dead end.
+          return [] 
                 
       # TODO
       # this function decides whether to offer a bid for a fare. In general you can consider your current position, time,
