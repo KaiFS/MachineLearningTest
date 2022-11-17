@@ -71,6 +71,10 @@ class Fare:
       def destination(self):
             return self._destination.index
 
+      @property
+      def actualDestination(self):
+            return self._destination
+
       # when the fare made the initial request for a taxi
       @property
       def calltime(self):
