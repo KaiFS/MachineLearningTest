@@ -104,6 +104,8 @@ class Taxi:
           # the dictionary items, meanwhile, contain a FareInfo object with the price, the destination, and whether 
           # or not this taxi has been allocated the fare (and thus should proceed to collect them ASAP from the origin)
           self._availableFares = {}
+          self._faresAwarded = 0
+          self._faresCompleted = 0
 
       # This property allows the dispatcher to query the taxi's location directly. It's like having a GPS transponder
       # in each taxi.
@@ -112,6 +114,27 @@ class Taxi:
           if self._loc is None:
              return (-1,-1)
           return self._loc.index
+
+      @property
+      def hasPassenger(self):
+          return self._passenger is not None
+
+      @property
+      def fairsAwarded(self):
+          return self._faresAwarded
+
+      def timeToDropoff(self):
+         if self.hasPassenger is False:
+            return 0
+         return self._world.travelTime(self._loc, self._passenger.actualDestination)
+
+      # distance to a given destination including the time it takes to get to the destination if the taxi
+      # must drop off a current passenger and then begin pathing to destination
+      def distanceToLocation(self, destination):
+         if self.hasPassenger is False:
+            return self._world.pathDistance2Node(self.currentLocation, destination.index)
+         else:
+            return self._world.pathDistance2Node(self.currentLocation, self._passenger.destination) + self._world.pathDistance2Node(self._passenger.destination, destination.index)
 
       #___________________________________________________________________________________________________________________________
       # methods to populate the taxi's knowledge base
@@ -173,7 +196,7 @@ class Taxi:
       def clockTick(self, world):
           # automatically go off duty if we have absorbed as much loss as we can in a day
           if self._account <= 0 and self._passenger is None:
-             print("Taxi {0} is going off-duty".format(self.number))
+             print("Taxi {0} is going off-duty; total completions: {1}/{2}".format(self.number, self._faresCompleted, self._faresAwarded))
              self.onDuty = False
              self._offDutyTime = self._world.simTime
              self._world.totalOfflines += 1
@@ -310,6 +333,7 @@ class Taxi:
              return
           # the dispatcher has approved our bid: mark the fare as ours
           elif msg == self.FARE_ALLOC:
+             self._faresAwarded += 1
              for fare in self._availableFares.items():
                  if fare[0][1] == args['origin'][0] and fare[0][2] == args['origin'][1]:
                     if fare[1].destination[0] == args['destination'][0] and fare[1].destination[1] == args['destination'][1]:
@@ -317,7 +341,10 @@ class Taxi:
                        return
           # we just dropped off a fare and received payment, add it to the account
           elif msg == self.FARE_PAY:
+             self._faresCompleted += 1
+             print('[{0}] Fair dropped off for: {1}'.format(self.number, args['amount']))
              self._account += args['amount']
+             print('[{0}] Total made: {1} total dropoffs: {2}'.format(self.number, self._account, self._faresCompleted))
              return
           # a fare cancelled before being collected, remove it from the list
           elif msg == self.FARE_CANCEL:
@@ -330,42 +357,11 @@ class Taxi:
       ''' HERE IS THE PART THAT YOU NEED TO MODIFY
       '''
 
-      # TODO
-      # this function should build your route and fill the _path list for each new
-      # journey. Below is a naive depth-first search implementation. You should be able
-      # to do much better than this!
-      def _planPath(self, origin, destination, **args):
-          # the list of explored paths. Recursive invocations pass in explored as a parameter
-          if 'explored' not in args:
-             args['explored'] = {}
-          # add this origin to the explored list
-          # explored is a dict purely so we can hash its index for fast lookup, so its value doesn't matter
-          args['explored'][origin] = None 
-          # the actual path we are going to generate
-          path = [origin]
-          # take the next node in the frontier, and expand it depth-wise               
-          if origin in self._map:
-             # the frontier of unexplored paths (from this Node
-             frontier = [node for node in self._map[origin].keys() if node not in args['explored']]
-             # recurse down to the next node. This will automatically create a depth-first
-             # approach because the recursion won't bottom out until no more frontier nodes
-             # can be generated 
-             for nextNode in frontier:
-                 path = path + self._planPath(nextNode, destination, explored=args['explored'])
-                 # stop early as soon as the destination has been found by any route.
-                 if destination in path:
-                    # validate path
-                    if len(path) > 1:
-                       try:
-                           # use a generator expression to find any invalid nodes in the path
-                           badNode = next(pnode for pnode in path[1:] if pnode not in self._map[path[path.index(pnode)-1]].keys())
-                           raise IndexError("Invalid path: no route from ({0},{1}) to ({2},{3} in map".format(self._map[path.index(pnode)-1][0], self._map[path.index(pnode)-1][1], pnode[0], pnode[1]))
-                       except StopIteration:
-                           pass
-                    return path
-          # didn't reach the destination from any reachable node
-          # no need, therefore, to expand the path for the higher-level call, this is a dead end.
-          return [] 
+      # this function simply using the A* path finding implemented in the world
+      # the implementation was migrated to networld from here because it is shared
+      # among other logic.
+      def _planPath(self, origin, destination):
+          return self._world.findPath(origin, destination)
                 
       # TODO
       # this function decides whether to offer a bid for a fare. In general you can consider your current position, time,
@@ -390,10 +386,9 @@ class Taxi:
           WillArriveOnTime = FareExpiryInFuture and SufficientDrivingTime
           NotCurrentlyBooked = NoCurrentPassengers and NoAllocatedFares
           CloseEnough = CanAffordToDrive and WillArriveOnTime
-          Worthwhile = PriceBetterThanCost and NotCurrentlyBooked 
+          Worthwhile = PriceBetterThanCost and (NotCurrentlyBooked or TimeToDestination < 15)
           Bid = CloseEnough and Worthwhile
           return Bid
-
-
+      
 
 
