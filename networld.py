@@ -98,7 +98,7 @@ class NetWorld:
           #self.eventQ = NetEventQueue()
           # the simulation clock. 
           self._time = 0
-          self.cancels = 0
+          self._cancels = 0
           self.totalOfflines = 0
 
       # properties
@@ -413,7 +413,7 @@ class NetWorld:
              return -1
           # all other destinations take finite time to reach.
           else:
-             return round((origin.traffic+destination.traffic+self.distance2Node(origin, destination))/2)
+             return round((origin.traffic+destination.traffic+self.pathDistance2Node(origin.index, destination.index))/2)
 
       # straight-line distance between 2 nodes. If the nodes are directly connected
       # this will be an exact heuristic
@@ -422,6 +422,57 @@ class NetWorld:
           if origin is None or destination is None:
              return -1
           return math.sqrt((destination.index[0]-origin.index[0])**2+(destination.index[1]-origin.index[1])**2)
+
+      # find the path between two nodes using A*
+      def findPath(self, origin, destination):
+         # the actual path we are going to generate
+          path = [origin]
+          # the frontier remaining to explore to build the path          
+          frontier = [origin]
+          frontier_g = {origin: 0}
+          frontier_f = {origin: 0}
+          visit_path = {origin: None}
+          dx, dy = destination
+          current = None
+          while len(frontier) != 0:
+             lowestCostIndex = numpy.argmin([frontier_f[n] for n in frontier])
+             current = frontier.pop(lowestCostIndex)
+             if current == destination:
+                break
+             cx, cy = current
+             current_node = self.getNode(cx, cy)
+             for (index, nx, ny) in current_node.neighbours:
+                neighbor = (nx, ny)
+                neighbor_cost = frontier_g[current] + math.sqrt((nx-cx)**2+(ny-cy)**2)
+                if neighbor not in frontier_g or neighbor_cost < frontier_g[neighbor]:
+                  frontier_g[neighbor] = neighbor_cost
+                  frontier_f[neighbor] = frontier_g[neighbor] + (abs(nx-dx) + abs(ny-dy))
+                  frontier.append(neighbor)
+                  visit_path[neighbor] = current
+
+          path = []
+          while visit_path[current] is not None:
+             path.append(current)
+             current = visit_path[current]
+          path.append(current)
+          return path[::-1]
+
+      # Distance between two nodes on the map from by shortest path
+      # This method finds the path from one node to the next using A*
+      # and then it returns the sum of the distance from node to node in the path
+      # this _should_ provide a more accurate distance and travel time than distance2Node
+      def pathDistance2Node(self, origin, destination):
+          # give an invalid distance if the nodes were invalid
+          if origin is None or destination is None:
+             return -1
+          path = self.findPath(origin, destination)
+
+          distance = 0
+          for idx, node in enumerate(path[:-1]):
+             nx, ny = node
+             dx, dy = path[idx+1]
+             distance += math.sqrt((nx-dx)**2+(ny-dy)**2)
+          return distance
 
       #_____________________________________________________________________________________________________________
       # methods called by world's members to execute coordinated actions
@@ -540,10 +591,10 @@ class NetWorld:
           # dispatchers *should* have a reference to the taxis they have allocated, and *should* check that
           # they're not off. But just in case, to prevent any spurious messages being sent...
           if taxi.onDuty:
-             taxi.recvMsg(taxi.FARE_CANCEL, **{'origin': origin})
+             taxi.recvMsg(taxi.FARE_CANCEL, **{'origin': origin})\
 
-          self.cancels += 1
-          print('Total fare cancels: {0}'.format(self.cancels))
+          self._cancels += 1
+          print('Total fare cancels: {0}'.format(self._cancels))
 
       '''methods generally called by Taxis
       '''
