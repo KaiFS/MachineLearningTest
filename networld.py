@@ -413,7 +413,7 @@ class NetWorld:
              return -1
           # all other destinations take finite time to reach.
           else:
-             return round((origin.traffic+destination.traffic+self.pathDistance2Node(origin.index, destination.index))/2)
+             return round((self.pathDistance2Node(origin.index, destination.index))/2)
 
       # straight-line distance between 2 nodes. If the nodes are directly connected
       # this will be an exact heuristic
@@ -433,6 +433,7 @@ class NetWorld:
           frontier_f = {origin: 0}
           visit_path = {origin: None}
           dx, dy = destination
+          destination_node = self.getNode(dx, dy)
           current = None
           while len(frontier) != 0:
              lowestCostIndex = numpy.argmin([frontier_f[n] for n in frontier])
@@ -443,10 +444,11 @@ class NetWorld:
              current_node = self.getNode(cx, cy)
              for (index, nx, ny) in current_node.neighbours:
                 neighbor = (nx, ny)
-                neighbor_cost = frontier_g[current] + math.sqrt((nx-cx)**2+(ny-cy)**2)
+                neighbor_node = self.getNode(nx, ny)
+                neighbor_cost = frontier_g[current] + neighbor_node.traffic + math.sqrt((nx-cx)**2+(ny-cy)**2)
                 if neighbor not in frontier_g or neighbor_cost < frontier_g[neighbor]:
                   frontier_g[neighbor] = neighbor_cost
-                  frontier_f[neighbor] = frontier_g[neighbor] + (abs(nx-dx) + abs(ny-dy))
+                  frontier_f[neighbor] = frontier_g[neighbor] + destination_node.traffic + (abs(nx-dx) + abs(ny-dy))
                   frontier.append(neighbor)
                   visit_path[neighbor] = current
 
@@ -471,8 +473,22 @@ class NetWorld:
           for idx, node in enumerate(path[:-1]):
              nx, ny = node
              dx, dy = path[idx+1]
-             distance += math.sqrt((nx-dx)**2+(ny-dy)**2)
-          return distance
+             dnode = self.getNode(dx, dy) 
+             distance += dnode.traffic + math.sqrt((nx-dx)**2+(ny-dy)**2)
+          originNode = self.getNode(origin[0], origin[1])
+          return originNode.traffic + distance
+
+      def pathTraffic2Node(self, origin, destination):
+          # give an invalid traffic sum if the nodes were invalid
+          if origin is None or destination is None:
+             return -1
+          path = self.findPath(origin, destination)
+
+          traffic = 0
+          for idx, (nx, ny) in enumerate(path[:-1]):
+             node = self.getNode(nx, ny)
+             distance += node.traffic
+          return traffic
 
       #_____________________________________________________________________________________________________________
       # methods called by world's members to execute coordinated actions

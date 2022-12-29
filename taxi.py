@@ -17,6 +17,7 @@ class FareInfo:
           # bid is a ternary value: -1 = no, 0 = undecided, 1 = yes indicating whether this
           # taxi has bid for this fare. 
           self.bid = 0
+          self.travelTime = 0
           self.allocated = False
 
 
@@ -81,6 +82,7 @@ class Taxi:
           # in order of traversal, and does NOT have to include every node passed through, if these
           # are incidental (i.e. involve no turns or stops or any other remarkable feature)
           self._path = []
+          self._fareDistance = 0
           # pick the first available entry point starting from the top left corner if we don't have a
           # preferred choice when coming on duty
           if self._onDutyPos is None:
@@ -106,6 +108,7 @@ class Taxi:
           self._availableFares = {}
           self._faresAwarded = 0
           self._faresCompleted = 0
+          self._fareSuccess = []
 
       # This property allows the dispatcher to query the taxi's location directly. It's like having a GPS transponder
       # in each taxi.
@@ -123,10 +126,21 @@ class Taxi:
       def fairsAwarded(self):
           return self._faresAwarded
 
+      def calcFareSuccess(self, time):
+         highestCost = 0
+         for (timeTaken, cost, success) in self._fareSuccess:
+            if timeTaken >= time and success is True and cost > highestCost:
+               highestCost = cost
+         return highestCost
+
       def timeToDropoff(self):
          if self.hasPassenger is False:
             return 0
          return self._world.travelTime(self._loc, self._passenger.actualDestination)
+
+      # time to a location including the current passenger dropoff time
+      def timeToLocation(self, destination):
+         return self.timeToDropoff() + self._world.travelTime(self._loc, destination)
 
       # distance to a given destination including the time it takes to get to the destination if the taxi
       # must drop off a current passenger and then begin pathing to destination
@@ -216,40 +230,47 @@ class Taxi:
           # decide what to do about available fares. This can be done whenever, but should be done
           # after we have dropped off fares so that they don't complicate decisions.
           faresToRemove = []
+          # start by updating the state of all of our fares and removing any that no longer apply.
           for fare in self._availableFares.items():
               # remember that availableFares is a dict indexed by (time, originx, originy). A location,
               # meanwhile, is an (x, y) tuple. So fare[0][0] is the time the fare called, fare[0][1]
               # is the fare's originx, and fare[0][2] is the fare's originy, which we can use to
               # build the location tuple.
               origin = (fare[0][1], fare[0][2])
-              # much more intelligent things could be done here. This simply naively takes the first
-              # allocated fare we have and plans a basic path to get us from where we are to where
-              # they are waiting. 
-              if len(self._path) == 0 and fare[1].allocated and self._passenger is None:
-                 # at the collection point for our next passenger?
-                 if self._loc.index[0] == origin[0] and self._loc.index[1] == origin[1]:
-                    self._passenger = self._loc.pickupFare(self._direction)
-                    # if a fare was collected, we can start to drive to their destination. If they
-                    # were not collected, that probably means the fare abandoned.
-                    if self._passenger is not None:
-                       self._path = self._planPath(self._loc.index, self._passenger.destination)
-                    faresToRemove.append(fare[0])
-                 # not at collection point, so determine how to get there
-                 else:
-                    self._path = self._planPath(self._loc.index, origin)
+              fare[1].travelTime = self.timeToLocation(self._world.getNode(origin[0], origin[1]))
               # get rid of any unallocated fares that are too stale to be likely customers
-              elif self._world.simTime-fare[0][0] > self._maxFareWait:
+              if self._world.simTime-fare[0][0] > self._maxFareWait:
                    faresToRemove.append(fare[0])
               # may want to bid on available fares. This could be done at any point here, it
               # doesn't need to be a particularly early or late decision amongst the things to do.
               elif fare[1].bid == 0:
-                 if self._bidOnFare(fare[0][0],origin,fare[1].destination,fare[1].price):
+                 if self._bidOnFare(fare,origin):
                     self._world.transmitFareBid(origin, self)
                     fare[1].bid = 1
                  else:
                     fare[1].bid = -1
           for expired in faresToRemove:
               del self._availableFares[expired]
+
+          # sort our allocated fares by closest travel time
+          # TODO: This could be possibly improved by building an ordered map of optimal passenger pickups
+          #    by comparing passenger destinations to other fare origings.
+          if len(self._path) == 0 and self._passenger is None:
+             allocatedFares = sorted([fare for fare in self._availableFares.items() if fare[1].allocated], key=lambda fare: fare[1].travelTime, reverse=True)
+             for fare in allocatedFares:
+                origin = (fare[0][1], fare[0][2])
+                # at the collection point for our next passenger?
+                if self._loc.index[0] == origin[0] and self._loc.index[1] == origin[1]:
+                   self._passenger = self._loc.pickupFare(self._direction)
+                   # if a fare was collected, we can start to drive to their destination. If they
+                   # were not collected, that probably means the fare abandoned.
+                   if self._passenger is not None:
+                      self._path = self._planPath(self._loc.index, self._passenger.destination)
+                      self._fareDistance = len(self._path)
+                   del self._availableFares[fare[0]]
+                # not at collection point, so determine how to get there
+                else:
+                   self._path = self._planPath(self._loc.index, origin)
           # may want to do something active whilst enroute - this simple default version does
           # nothing, but that is probably not particularly 'intelligent' behaviour.
           else:
@@ -338,11 +359,13 @@ class Taxi:
                  if fare[0][1] == args['origin'][0] and fare[0][2] == args['origin'][1]:
                     if fare[1].destination[0] == args['destination'][0] and fare[1].destination[1] == args['destination'][1]:
                        fare[1].allocated = True
+                       print('Taxi {0} awarded fare ${1}'.format(self.number, fare[1].price))
                        return
           # we just dropped off a fare and received payment, add it to the account
           elif msg == self.FARE_PAY:
              self._faresCompleted += 1
              print('[{0}] Fair dropped off for: {1}'.format(self.number, args['amount']))
+             self._fareSuccess.append((self._fareDistance, args['amount'], True))
              self._account += args['amount']
              print('[{0}] Total made: {1} total dropoffs: {2}'.format(self.number, self._account, self._faresCompleted))
              return
@@ -350,6 +373,8 @@ class Taxi:
           elif msg == self.FARE_CANCEL:
              for fare in self._availableFares.items():
                  if fare[0][1] == args['origin'][0] and fare[0][2] == args['origin'][1]: # and fare[1].allocated: 
+                    if fare[1].allocated:
+                        print('Allocated fair cancelled')
                     del self._availableFares[fare[0]]
                     return
       #_____________________________________________________________________________________________________________________
@@ -369,12 +394,16 @@ class Taxi:
       # may seem relevant to decide whether to bid. The (crude) constraint-satisfaction method below is only intended as
       # a hint that maybe some form of CSP solver with automated reasoning might be a good way of implementing this. But
       # other methodologies could work well. For best results you will almost certainly need to use probabilistic reasoning.
-      def _bidOnFare(self, time, origin, destination, price):
+      def _bidOnFare(self, fare, origin):
+          time = fare[0][0]
+          destination = fare[1].destination 
+          price = fare[1].price
+          allocatedFares = [fare for fare in self._availableFares.values() if fare.allocated]
           NoCurrentPassengers = self._passenger is None
-          NoAllocatedFares = len([fare for fare in self._availableFares.values() if fare.allocated]) == 0
-          TimeToOrigin = self._world.travelTime(self._loc, self._world.getNode(origin[0], origin[1]))
+          NoAllocatedFares = len(allocatedFares) == 0
+          TimeToOrigin = self.timeToLocation(self._world.getNode(origin[0], origin[1]))
           TimeToDestination = self._world.travelTime(self._world.getNode(origin[0], origin[1]),
-                                                     self._world.getNode(destination[1], destination[1]))
+                                                     self._world.getNode(destination[0], destination[1]))
           FiniteTimeToOrigin = TimeToOrigin > 0
           FiniteTimeToDestination = TimeToDestination > 0
           CanAffordToDrive = self._account > TimeToOrigin
@@ -388,7 +417,16 @@ class Taxi:
           CloseEnough = CanAffordToDrive and WillArriveOnTime
           Worthwhile = PriceBetterThanCost and (NotCurrentlyBooked or TimeToDestination < 15)
           Bid = CloseEnough and Worthwhile
+
+          # If the bid passes our initial check for a bed, compare it to our existing bids to determine if
+          # it is worth even considering this bid compared to ones we already have available for allocation
+          # Essentially if this bid is so outranked by our other bids, disregard it.
+          # The min amount of fairs could be adjusted - but we probably do not need more than 5 allocated at once.
+          if Bid and len(allocatedFares) > 5:
+             allocatedFares.append(fare[1])
+             leastOrderedFares = sorted(allocatedFares, key=lambda fare: fare.travelTime)
+             if leastOrderedFares[0] == fare[1]:
+               return False
           return Bid
-      
 
 

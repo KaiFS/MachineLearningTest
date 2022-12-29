@@ -182,6 +182,7 @@ class Dispatcher:
                             self._parent.broadcastFare(origin,
                                                        destination,
                                                        self._fareBoard[origin][destination][time].price)
+                         # Allocate a fare when there enough taxis availablwe for bidding.
                          elif self._fareBoard[origin][destination][time].taxi < 0 and len(self._fareBoard[origin][destination][time].bidders) >= self.taxisAvailableForBidding():
                               self._allocateFare(origin, destination, time)
 
@@ -197,14 +198,40 @@ class Dispatcher:
          fare information, even though currently it's not using all of it, because you may wish to
          take into account other details.
       '''
-      # TODO - improve costing
+      # Cost of travel time including traffic along entire path + taking into account the number of unallocated fares.
       def _costFare(self, fare):
           timeToDestination = self._parent.travelTime(self._parent.getNode(fare.origin[0],fare.origin[1]),
                                                       self._parent.getNode(fare.destination[0],fare.destination[1]))
           # if the world is gridlocked, a flat fare applies.
           if timeToDestination < 0:
              return 150
-          return (25+timeToDestination)/0.9
+
+          defaultCost = (25+timeToDestination + self.totalFares())/0.9
+          # Calculate cost from taxi's success rates.
+          calculatedCost = self.calcTimeCostSuccess(timeToDestination, defaultCost)
+          return calculatedCost
+
+
+      # Use historical data from taxi's to determine a cost.
+      def calcTimeCostSuccess(self, time, defaultCost): 
+         cost = defaultCost
+         totalCost = 0
+         for taxi in self._taxis:
+            highestCost = taxi.calcFareSuccess(time)
+            if highestCost > 0:
+               totalCost = highestCost
+         if totalCost > 0:
+            cost = totalCost
+         return cost
+
+      def totalFares(self):
+         totalFares = 0
+         for origin in self._fareBoard.keys():
+             for destination in self._fareBoard[origin].keys():
+                for time in self._fareBoard[origin][destination].keys():
+                   if self._fareBoard[origin][destination][time].taxi <= 0:
+                      totalFares = totalFares + 1
+         return totalFares
 
       # This method determines a minimum amount of taxis available for bidding.
       # It includes all on-duty taxis with no passengers and all taxis with a 
@@ -227,20 +254,15 @@ class Dispatcher:
           if self._parent.simTime-time > taxiBidRespondTime:
              allocatedTaxi = -1
              fareNode = self._parent.getNode(origin[0],origin[1])
-             # this does the allocation. There are a LOT of conditions to check, namely:
-             # 1) that the fare is asking for transport from a valid location;
-             # 2) that the bidding taxi is in the dispatcher's list of taxis
-             # 3) that the taxi's location is 'on-grid': somewhere in the dispatcher's map
-             # 4) that at least one valid taxi has actually bid on the fare
-             #print('Allocating a fare for {0} taxis bids'.format(len(self._fareBoard[origin][destination][time].bidders)))
              if fareNode is not None:
                 bidders = self._fareBoard[origin][destination][time].bidders
                 if len(bidders) > 0:
+                   # Get a list of all taxis bidding
                    bidderTaxis = list(map(lambda idx: self._taxis[idx], [bidder for bidder in bidders if len(self._taxis) > bidder]))
-                   prioritizedBidders = sorted(bidderTaxis, key = lambda taxi: (taxi.hasPassenger, taxi.fairsAwarded, taxi.distanceToLocation(fareNode)))
+                   # Sort this list by taxis that have a passenger, the amount of fairs they have been awarded, and their time to destination
+                   prioritizedBidders = sorted(bidderTaxis, key = lambda taxi: (taxi.hasPassenger, taxi.fairsAwarded, taxi.timeToLocation(fareNode)))
                    allocatedTaxi = self._taxis.index(prioritizedBidders[0])
-             # and after all that, we still have to check that somebody won, because any of the other reasons to invalidate
-             # the auction may have occurred.
+             # Allocate fare for winning taxi
              if allocatedTaxi >= 0:
                 # but if so, allocate the taxi.
                 self._fareBoard[origin][destination][time].taxi = allocatedTaxi     
